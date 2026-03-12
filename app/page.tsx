@@ -844,8 +844,8 @@ ${conversationText}
                     e.currentTarget.style.backgroundColor = bgColor;
                     const icon = e.currentTarget.querySelector('svg');
                     const text = e.currentTarget.querySelector('span');
-                    if (icon) (icon as HTMLElement).style.color = 'white';
-                    if (text) (text as HTMLElement).style.color = 'white';
+                    if (icon) icon.style.color = 'white';
+                    if (text) text.style.color = 'white';
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.transform = 'scale(1) translateY(0)';
@@ -853,7 +853,7 @@ ${conversationText}
                     e.currentTarget.style.backgroundColor = '#ffffff';
                     const icon = e.currentTarget.querySelector('svg');
                     const text = e.currentTarget.querySelector('span');
-                    if (icon) (icon as HTMLElement).style.color = bgColor;
+                    if (icon) (icon).style.color = bgColor;
                     if (text) (text as HTMLElement).style.color = bgColor;
                   }}
                   onMouseDown={(e) => {
@@ -922,7 +922,7 @@ ${conversationText}
               e.currentTarget.style.borderColor = '#a8a29e';
               e.currentTarget.style.backgroundColor = '#fafaf9';
               const icon = e.currentTarget.querySelector('svg');
-              if (icon) (icon as HTMLElement).style.transform = 'rotate(90deg)';
+              if (icon) (icon).style.transform = 'rotate(90deg)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = 'scale(1) translateY(0)';
@@ -930,7 +930,7 @@ ${conversationText}
               e.currentTarget.style.borderColor = '#e7e5e4';
               e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
               const icon = e.currentTarget.querySelector('svg');
-              if (icon) (icon as HTMLElement).style.transform = 'rotate(0deg)';
+              if (icon) (icon).style.transform = 'rotate(0deg)';
             }}
             onMouseDown={(e) => {
               e.currentTarget.style.transform = 'scale(0.95) translateY(0)';
