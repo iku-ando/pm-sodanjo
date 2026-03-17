@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Archive, Settings, Calendar, Sparkles, Clock, Users, MessageSquare, CheckCircle, FileText, FolderOpen, AlertTriangle, MessageCircle, DollarSign, MoreHorizontal } from 'lucide-react';
+import { Send, Archive, Settings, Calendar, Sparkles, Clock, Users, MessageSquare, CheckCircle, FileText, FolderOpen, AlertTriangle, MessageCircle, DollarSign, MoreHorizontal, Upload, UserSearch, X, Mic, MicOff } from 'lucide-react';
+import * as mammoth from 'mammoth';
+import { Player } from '@lottiefiles/react-lottie-player';
 
 const categories = [
   'スケジュール管理',
@@ -129,7 +131,14 @@ export default function PMKnowledgeApp() {
   const [apiKey, setApiKey] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
+  const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string } | null>(null);
+  const [diagnosisResult, setDiagnosisResult] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('pm-knowledge-history');
@@ -138,11 +147,71 @@ export default function PMKnowledgeApp() {
     if (savedWebhook) setSlackWebhook(savedWebhook);
     const savedApiKey = localStorage.getItem('anthropic-api-key');
     if (savedApiKey) setApiKey(savedApiKey);
+    
+    // 音声認識のサポートチェック
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
+      setSpeechSupported(true);
+    }
   }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // 音声認識の開始・停止
+  const toggleListening = () => {
+    if (!speechSupported) {
+      alert('お使いのブラウザは音声認識に対応していません。Chrome または Safari をお使いください。');
+      return;
+    }
+
+    if (isListening) {
+      // 停止
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+    } else {
+      // 開始
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      
+      recognition.lang = 'ja-JP';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onresult = (event: any) => {
+        let finalTranscript = '';
+        let interimTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript;
+          } else {
+            interimTranscript += transcript;
+          }
+        }
+
+        if (finalTranscript) {
+          setUserInput(prev => prev + finalTranscript);
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('音声認識エラー:', event.error);
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+      setIsListening(true);
+    }
+  };
 
   const startConversation = (category: string) => {
     setSelectedCategory(category);
@@ -155,6 +224,156 @@ export default function PMKnowledgeApp() {
     const initialMessage = `よし、【${selectedCategory}】ね。了解よ。${length === 'short' ? 'サクッと' : 'じっくり'}いきましょ。\n\nあんた、まずは何が起きたのか教えてちょうだい。先輩も同じような失敗、山ほどしてきたから。`;
     setMessages([{ role: 'assistant', content: initialMessage, mood: 'neutral' }]);
     setScreen('chat');
+  };
+
+  const handleFileUpload = async (file: File) => {
+    const fileName = file.name.toLowerCase();
+    const isText = file.type === 'text/plain' || fileName.endsWith('.txt') || fileName.endsWith('.md');
+    const isDocx = fileName.endsWith('.docx') || file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
+    if (isText) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setUploadedFile({ name: file.name, content: e.target?.result as string });
+      };
+      reader.readAsText(file);
+    } else if (isDocx) {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        setUploadedFile({ name: file.name, content: result.value });
+      } catch (error) {
+        alert('Wordファイルの読み込みに失敗しました。別のファイルをお試しください。');
+      }
+    } else {
+      alert('対応形式: .txt, .md, .docx');
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    handleFileUpload(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const analyzeClientPersonality = async () => {
+    if (!uploadedFile) {
+      alert('議事録ファイルをアップロードしてください');
+      return;
+    }
+    if (!apiKey) {
+      alert('APIキーが設定されていません。設定画面からAnthropic APIキーを登録してください。');
+      return;
+    }
+
+    setIsTyping(true);
+    setDiagnosisResult(null);
+
+    try {
+      const systemPrompt = `あなたはマツコ・デラックス風の先輩PMです。議事録を分析して、クライアントの性格・特性を診断し、プロジェクトへの影響とリスクを評価してください。
+
+【診断フレームワーク】
+■ ソーシャルスタイル理論（メイン）
+議事録の発言パターンから、以下4タイプのどれに近いかを判定：
+
+1. ドライバー（Driving）- 主張性:高 / 感情表出:低
+   特徴：結果重視、即断即決、効率優先、指示的
+   口癖：「で、結論は？」「いつまでにできる？」
+
+2. エクスプレッシブ（Expressive）- 主張性:高 / 感情表出:高
+   特徴：ビジョン重視、アイデア豊富、熱意的、変化を好む
+   口癖：「面白いね！」「こういうのどう？」
+
+3. エミアブル（Amiable）- 主張性:低 / 感情表出:高
+   特徴：協調重視、合意形成、サポーティブ、安定志向
+   口癖：「皆さんはどう思います？」「無理のない範囲で」
+
+4. アナリティカル（Analytical）- 主張性:低 / 感情表出:低
+   特徴：正確性重視、慎重、データ志向、計画的
+   口癖：「根拠は？」「リスクは検討した？」
+
+■ MBTI的補足（サブ）
+上記ソーシャルスタイルに加え、以下の傾向も補足的に分析：
+- 外向(E)/内向(I)：会議での発言頻度、主導権の取り方
+- 直感(N)/感覚(S)：抽象的なビジョン vs 具体的な事実・数字への関心
+- 思考(T)/感情(F)：論理的判断 vs 人間関係・感情への配慮
+- 判断(J)/知覚(P)：計画遵守 vs 柔軟な変更対応
+
+【分析観点】
+1. コミュニケーションスタイル（直接的/間接的、詳細志向/概要志向）
+2. 意思決定パターン（即断即決型/熟考型/合議型）
+3. リスク許容度（挑戦的/保守的）
+4. 期待値の傾向（高い/現実的/曖昧）
+5. 変更への態度（柔軟/頑固）
+
+【出力形式】
+あら、この議事録ね。ちょっと見せてもらうわよ...
+
+**ソーシャルスタイル診断**
+🎯 メインタイプ：（ドライバー/エクスプレッシブ/エミアブル/アナリティカル）
+（なぜそう判断したか、議事録の具体的な発言や態度を引用して説明）
+
+**MBTI的傾向**
+（E/I）（N/S）（T/F）（J/P）の傾向を簡潔に説明
+
+**クライアントタイプ**
+（ソーシャルスタイル＋MBTI的傾向を踏まえて、一言でキャッチーに表現）
+
+**性格・特性の分析**
+（マツコ風に解説）
+
+**プロジェクトへの影響**
+⚠️ 要注意ポイント：
+・（具体的なリスク1）
+・（具体的なリスク2）
+・（具体的なリスク3）
+
+✅ 活かせるポイント：
+・（ポジティブな特性1）
+・（ポジティブな特性2）
+
+**このタイプへの効果的なアプローチ**
+（ソーシャルスタイル理論に基づいた具体的なコミュニケーション戦略）
+
+**先輩からのアドバイス**
+（このタイプのクライアントとうまくやるコツ）
+
+---
+（締めの一言）`;
+
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 2048,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: `以下の議事録を分析してください：\n\n${uploadedFile.content}` }]
+        })
+      });
+
+      if (!response.ok) throw new Error('API呼び出しに失敗しました');
+      const data = await response.json();
+      setDiagnosisResult(data.content[0].text);
+    } catch (error: any) {
+      alert('分析に失敗しました: ' + error.message);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   const handleSend = async () => {
@@ -435,6 +654,7 @@ ${conversationText}
     alert('設定を保存しました!');
   };
 
+  // 設定画面
   if (showSettings) {
     return (
       <div className="min-h-screen p-6" style={noiseBackground}>
@@ -498,6 +718,7 @@ ${conversationText}
     );
   }
 
+  // 履歴画面
   if (showHistory) {
     return (
       <div className="min-h-screen p-6" style={noiseBackground}>
@@ -568,6 +789,175 @@ ${conversationText}
     );
   }
 
+  // クライアント診断画面
+  if (screen === 'client-diagnosis') {
+    return (
+      <div className="min-h-screen p-6" style={noiseBackground}>
+        <FontLoader />
+        <div className="max-w-4xl mx-auto">
+          <button 
+            onClick={() => {
+              // 診断データを完全にクリア
+              setUploadedFile(null);
+              setDiagnosisResult(null);
+              setScreen('category');
+            }} 
+            className="mb-6 text-stone-600 text-sm font-medium transition-all px-5 py-2.5 border-2 border-stone-300 rounded-full duration-300"
+            style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.05)';
+              e.currentTarget.style.backgroundColor = '#fafaf9';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1)';
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+          >
+            ← TOPに戻る
+          </button>
+
+          <div className="bg-white/90 backdrop-blur-sm rounded-3xl shadow-xl p-10 border border-amber-200">
+            <div className="flex items-center gap-4 mb-8">
+              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg">
+                <UserSearch className="w-7 h-7 text-white" />
+              </div>
+              <div>
+                <h2 className="text-2xl text-gray-800 tracking-wide" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 500 }}>クライアント性格・特性診断</h2>
+                <p className="text-sm text-gray-500 mt-1" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>議事録をアップロードして、クライアントの特性を分析</p>
+              </div>
+            </div>
+
+            {/* プライバシー説明 */}
+            <div className="mb-6 p-4 bg-blue-50 rounded-xl border border-blue-200">
+              <p className="text-sm text-blue-700 flex items-start gap-2" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>
+                <span className="text-lg">🔒</span>
+                <span>アップロードした議事録と診断結果は、このページ内でのみ使用され、履歴への保存やSlackへの共有は行われません。ページを離れると自動的に削除されます。</span>
+              </p>
+            </div>
+
+            {/* ファイルアップロードエリア */}
+            <div 
+              className={`border-2 border-dashed rounded-2xl p-8 mb-6 transition-all duration-300 ${
+                isDragging 
+                  ? 'border-amber-400 bg-amber-50' 
+                  : uploadedFile 
+                    ? 'border-green-400 bg-green-50' 
+                    : 'border-stone-300 hover:border-amber-400'
+              }`}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={(e) => e.target.files && handleFileUpload(e.target.files[0])}
+                accept=".txt,.md,.docx"
+                className="hidden"
+              />
+              
+              {uploadedFile ? (
+                <div className="text-center">
+                  <div className="flex items-center justify-center gap-3 mb-3">
+                    <FileText className="w-8 h-8 text-green-500" />
+                    <span className="text-lg text-gray-700" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 500 }}>{uploadedFile.name}</span>
+                    <button 
+                      onClick={() => setUploadedFile(null)}
+                      className="p-1 hover:bg-gray-200 rounded-full transition-all duration-300"
+                    >
+                      <X className="w-5 h-5 text-gray-500" />
+                    </button>
+                  </div>
+                  <p className="text-sm text-gray-500" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>ファイルがアップロードされました</p>
+                </div>
+              ) : (
+                <div className="text-center">
+                  <Upload className="w-12 h-12 text-stone-400 mx-auto mb-4" />
+                  <p className="text-gray-600 mb-2" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 500 }}>議事録ファイルをドラッグ＆ドロップ</p>
+                  <p className="text-sm text-gray-400 mb-4" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>または</p>
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="px-6 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-full text-sm transition-all duration-300"
+                    style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 500 }}
+                  >
+                    ファイルを選択
+                  </button>
+                  <p className="text-xs text-gray-400 mt-4" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>対応形式: .txt, .md, .docx</p>
+                </div>
+              )}
+            </div>
+
+            {/* 分析ボタン */}
+            <button
+              onClick={analyzeClientPersonality}
+              disabled={!uploadedFile || isTyping}
+              className={`w-full py-4 rounded-2xl shadow-lg tracking-wide flex items-center justify-center gap-3 transition-all duration-300 ${
+                uploadedFile && !isTyping
+                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white hover:from-amber-600 hover:to-orange-600 hover:scale-[1.02]'
+                  : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+              }`}
+              style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 500 }}
+            >
+              {isTyping ? (
+                <>
+                  <div className="flex gap-1">
+                    <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                    <div className="w-2 h-2 bg-white rounded-full animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                  </div>
+                  <span>分析中...</span>
+                </>
+              ) : (
+                <>
+                  <UserSearch className="w-5 h-5" />
+                  <span>クライアントを分析する</span>
+                </>
+              )}
+            </button>
+
+            {/* 診断結果 */}
+            {diagnosisResult && (
+              <div className="mt-8">
+                {/* 注意書き */}
+                <div className="mb-4 p-4 bg-stone-100 rounded-xl border border-stone-200">
+                  <p className="text-sm text-stone-600 flex items-start gap-2" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>
+                    <span className="text-lg">💡</span>
+                    <span>この診断はソーシャルスタイル理論とMBTI的観点をベースにしたAIによる推測です。あくまで参考情報として活用し、最終的な判断はあなた自身で行ってください。</span>
+                  </p>
+                </div>
+                
+                {/* データ取り扱いの説明 */}
+                <div className="mb-4 p-4 bg-blue-50 rounded-xl border border-blue-200">
+                  <p className="text-sm text-blue-700 flex items-start gap-2" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>
+                    <span className="text-lg">🔒</span>
+                    <span>アップロードした議事録と診断結果は、このページを離れると自動的に削除されます。履歴への保存やSlackへの共有は行われません。</span>
+                  </p>
+                </div>
+                
+                <div className="p-6 bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl border border-amber-200">
+                  <div className="flex items-start gap-4">
+                    <div style={{ width: '100px', height: '100px', flexShrink: 0 }}>
+                      <Player
+                        autoplay
+                        keepLastFrame
+                        src="/animations/cactus.json"
+                        style={{ width: '100%', height: '100%' }}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <pre className="whitespace-pre-wrap text-sm text-gray-700 leading-relaxed" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>{diagnosisResult}</pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 会話長さ選択画面
   if (screen === 'length-select') {
     return (
       <div className="min-h-screen p-6 flex items-center justify-center" style={noiseBackground}>
@@ -655,6 +1045,7 @@ ${conversationText}
     );
   }
 
+  // チャット画面
   if (screen === 'chat') {
     const maxTurns = conversationLength === 'short' ? 7 : 15;
     const isComplete = turnCount >= maxTurns && messages[messages.length - 1]?.role === 'assistant';
@@ -742,16 +1133,41 @@ ${conversationText}
               </button>
             )}
             <div className="flex gap-4">
-              <input 
-                type="text" 
-                value={userInput} 
-                onChange={(e) => setUserInput(e.target.value)} 
-                onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()} 
-                placeholder="メッセージを入力..." 
-                className="flex-1 px-6 py-4 border border-stone-200 rounded-full focus:ring-1 focus:ring-stone-300 focus:border-stone-300 bg-white/80 text-sm tracking-wider transition-all" 
-                style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }} 
-                disabled={isTyping} 
-              />
+              <div className="flex-1 relative">
+                <input 
+                  type="text" 
+                  value={userInput} 
+                  onChange={(e) => setUserInput(e.target.value)} 
+                  onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()} 
+                  placeholder={isListening ? "🎤 話してください..." : "メッセージを入力..."} 
+                  className={`w-full px-6 py-4 pr-12 border rounded-full focus:ring-1 focus:ring-stone-300 focus:border-stone-300 bg-white/80 text-sm tracking-wider transition-all ${isListening ? 'border-red-400 bg-red-50/50' : 'border-stone-200'}`}
+                  style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }} 
+                  disabled={isTyping} 
+                />
+                {userInput && (
+                  <button
+                    onClick={() => setUserInput('')}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-stone-200 transition-all duration-200"
+                    title="クリア"
+                  >
+                    <X className="w-4 h-4 text-stone-400" />
+                  </button>
+                )}
+              </div>
+              {speechSupported && (
+                <button 
+                  onClick={toggleListening}
+                  disabled={isTyping}
+                  className={`px-4 py-4 rounded-full shadow-sm hover:shadow-md transition-all hover:scale-105 duration-300 ${
+                    isListening 
+                      ? 'bg-red-500 text-white animate-pulse' 
+                      : 'bg-white border border-stone-200 text-stone-600 hover:bg-stone-50'
+                  }`}
+                  title={isListening ? "音声入力を停止" : "音声入力を開始"}
+                >
+                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+              )}
               <button 
                 onClick={handleSend} 
                 disabled={isTyping || !userInput.trim()} 
@@ -766,6 +1182,7 @@ ${conversationText}
     );
   }
 
+  // メイン画面（カテゴリ選択）
   return (
     <div className="min-h-screen p-6 flex items-center relative" style={{...noiseBackground, overflow: 'hidden'}}>
       <FontLoader />
@@ -808,11 +1225,12 @@ ${conversationText}
           
           {/* サボテンアイコン */}
           <div className="flex justify-center mb-6">
-            <div style={{ animation: 'float 3s ease-in-out infinite', background: 'transparent' }}>
-              <img 
-                src="/images/cactus.png"
-                alt="サボテン先輩"
-                style={{ width: '200px', height: '200px', objectFit: 'contain', background: 'transparent' }}
+            <div style={{ width: '300px', height: '300px' }}>
+              <Player
+                autoplay
+                keepLastFrame
+                src="/animations/cactus.json"
+                style={{ width: '100%', height: '100%' }}
               />
             </div>
           </div>
@@ -824,7 +1242,7 @@ ${conversationText}
           <h2 className="text-lg text-gray-800 mb-8 tracking-wide font-medium text-left" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 500, paddingLeft: '0px' }}>
             どんなカテゴリで相談したいのよ？
           </h2>
-          <div className="grid grid-cols-5 gap-4">
+          <div className="grid grid-cols-5 gap-4 mb-8">
             {categories.map((category) => {
               const IconComponent = categoryIcons[category];
               const bgColor = categoryColors[category];
@@ -844,8 +1262,8 @@ ${conversationText}
                     e.currentTarget.style.backgroundColor = bgColor;
                     const icon = e.currentTarget.querySelector('svg');
                     const text = e.currentTarget.querySelector('span');
-                    if (icon) icon.style.color = 'white';
-                    if (text) text.style.color = 'white';
+                    if (icon) (icon as SVGElement).style.color = 'white';
+                    if (text) (text as HTMLElement).style.color = 'white';
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.transform = 'scale(1) translateY(0)';
@@ -853,7 +1271,7 @@ ${conversationText}
                     e.currentTarget.style.backgroundColor = '#ffffff';
                     const icon = e.currentTarget.querySelector('svg');
                     const text = e.currentTarget.querySelector('span');
-                    if (icon) (icon).style.color = bgColor;
+                    if (icon) (icon as SVGElement).style.color = bgColor;
                     if (text) (text as HTMLElement).style.color = bgColor;
                   }}
                   onMouseDown={(e) => {
@@ -883,6 +1301,43 @@ ${conversationText}
               );
             })}
           </div>
+
+          {/* クライアント診断ボタン（3行目・大きなボタン） */}
+          <button 
+            onClick={() => setScreen('client-diagnosis')} 
+            className="w-full p-8 bg-gradient-to-r from-amber-100 to-orange-100 border-2 border-amber-300 rounded-2xl transition-all duration-300 flex items-center justify-center gap-4 group"
+            style={{ fontFamily: 'Quicksand, sans-serif' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'scale(1.02) translateY(-4px)';
+              e.currentTarget.style.boxShadow = '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)';
+              e.currentTarget.style.backgroundImage = 'linear-gradient(to right, rgb(252, 211, 77), rgb(251, 146, 60))';
+              const texts = e.currentTarget.querySelectorAll('div');
+              texts.forEach(t => (t as HTMLElement).style.color = 'white');
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'scale(1) translateY(0)';
+              e.currentTarget.style.boxShadow = 'none';
+              e.currentTarget.style.backgroundImage = 'linear-gradient(to right, rgb(254, 243, 199), rgb(255, 237, 213))';
+              const title = e.currentTarget.querySelector('.diagnosis-title') as HTMLElement;
+              const desc = e.currentTarget.querySelector('.diagnosis-desc') as HTMLElement;
+              if (title) title.style.color = 'rgb(146, 64, 14)';
+              if (desc) desc.style.color = 'rgb(180, 83, 9)';
+            }}
+            onMouseDown={(e) => {
+              e.currentTarget.style.transform = 'scale(0.98) translateY(0)';
+            }}
+            onMouseUp={(e) => {
+              e.currentTarget.style.transform = 'scale(1.02) translateY(-4px)';
+            }}
+          >
+            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300">
+              <UserSearch className="w-7 h-7 text-white" />
+            </div>
+            <div className="text-left">
+              <div className="diagnosis-title text-xl font-medium text-amber-800 tracking-wide transition-all duration-300" style={{ fontWeight: 500 }}>クライアント性格・特性診断</div>
+              <div className="diagnosis-desc text-sm text-amber-600 mt-1 transition-all duration-300" style={{ fontWeight: 400 }}>議事録をアップロードして、クライアントの特性とリスクを事前に把握</div>
+            </div>
+          </button>
         </div>
 
         <div className="flex gap-4 justify-center">
@@ -922,7 +1377,7 @@ ${conversationText}
               e.currentTarget.style.borderColor = '#a8a29e';
               e.currentTarget.style.backgroundColor = '#fafaf9';
               const icon = e.currentTarget.querySelector('svg');
-              if (icon) (icon).style.transform = 'rotate(90deg)';
+              if (icon) (icon as SVGElement).style.transform = 'rotate(90deg)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.transform = 'scale(1) translateY(0)';
@@ -930,7 +1385,7 @@ ${conversationText}
               e.currentTarget.style.borderColor = '#e7e5e4';
               e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
               const icon = e.currentTarget.querySelector('svg');
-              if (icon) (icon).style.transform = 'rotate(0deg)';
+              if (icon) (icon as SVGElement).style.transform = 'rotate(0deg)';
             }}
             onMouseDown={(e) => {
               e.currentTarget.style.transform = 'scale(0.95) translateY(0)';
