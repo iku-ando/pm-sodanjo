@@ -3,7 +3,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Send, Archive, Settings, Calendar, Sparkles, Clock, Users, MessageSquare, CheckCircle, FileText, FolderOpen, AlertTriangle, MessageCircle, DollarSign, MoreHorizontal, Upload, UserSearch, X, Mic, MicOff } from 'lucide-react';
 import * as mammoth from 'mammoth';
-import { Player } from '@lottiefiles/react-lottie-player';
+import dynamic from 'next/dynamic';
+
+// Lottie Playerをクライアントサイドでのみ読み込む
+const Player = dynamic(
+  () => import('@lottiefiles/react-lottie-player').then((mod) => mod.Player),
+  { ssr: false }
+);
 
 const categories = [
   'スケジュール管理',
