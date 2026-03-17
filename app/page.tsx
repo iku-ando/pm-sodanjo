@@ -141,11 +141,23 @@ export default function PMKnowledgeApp() {
   const [isDragging, setIsDragging] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
 
+  // パスワード（環境変数から取得、なければデフォルト）
+  const SITE_PASSWORD = process.env.NEXT_PUBLIC_SITE_PASSWORD || 'pm-sodanjo-2024';
+
   useEffect(() => {
+    // 認証状態をlocalStorageから復元
+    const authStatus = localStorage.getItem('pm-sodanjo-auth');
+    if (authStatus === 'authenticated') {
+      setIsAuthenticated(true);
+    }
+    
     const saved = localStorage.getItem('pm-knowledge-history');
     if (saved) setHistory(JSON.parse(saved));
     const savedWebhook = localStorage.getItem('slack-webhook');
@@ -156,6 +168,16 @@ export default function PMKnowledgeApp() {
       setSpeechSupported(true);
     }
   }, []);
+
+  const handlePasswordSubmit = () => {
+    if (passwordInput === SITE_PASSWORD) {
+      setIsAuthenticated(true);
+      localStorage.setItem('pm-sodanjo-auth', 'authenticated');
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+    }
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -651,6 +673,64 @@ ${conversationText}
     setShowSettings(false);
     alert('設定を保存しました!');
   };
+
+  // パスワード認証画面
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen p-6 flex items-center justify-center" style={noiseBackground}>
+        <FontLoader />
+        <div className="max-w-md w-full bg-white/90 backdrop-blur-sm rounded-3xl shadow-xl p-10 border border-purple-100">
+          <div className="text-center mb-8">
+            <div className="flex justify-center mb-4">
+              <div style={{ width: '120px', height: '120px' }}>
+                <Player
+                  autoplay
+                  keepLastFrame
+                  src="/animations/cactus.json"
+                  style={{ width: '100%', height: '100%' }}
+                />
+              </div>
+            </div>
+            <h1 className="text-2xl text-gray-800 mb-2" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 500 }}>
+              PM相談所
+            </h1>
+            <p className="text-sm text-gray-500" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>
+              パスワードを入力してください
+            </p>
+          </div>
+          
+          <div className="space-y-4">
+            <input 
+              type="password" 
+              value={passwordInput} 
+              onChange={(e) => {
+                setPasswordInput(e.target.value);
+                setPasswordError(false);
+              }} 
+              onKeyPress={(e) => e.key === 'Enter' && handlePasswordSubmit()}
+              placeholder="パスワード" 
+              className={`w-full px-5 py-4 border rounded-2xl focus:ring-2 focus:ring-purple-300 focus:border-transparent transition-all duration-300 text-center text-lg ${
+                passwordError ? 'border-red-400 bg-red-50' : 'border-purple-200'
+              }`}
+              style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}
+            />
+            {passwordError && (
+              <p className="text-red-500 text-sm text-center" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>
+                パスワードが違います
+              </p>
+            )}
+            <button 
+              onClick={handlePasswordSubmit}
+              className="w-full bg-gradient-to-r from-purple-500 to-pink-500 text-white py-4 rounded-2xl hover:from-purple-600 hover:to-pink-600 transition-all duration-300 tracking-wide shadow-lg" 
+              style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}
+            >
+              入室する
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // 設定画面
   if (showSettings) {
