@@ -134,7 +134,6 @@ export default function PMKnowledgeApp() {
   const [history, setHistory] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [slackWebhook, setSlackWebhook] = useState('');
-  const [apiKey, setApiKey] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [turnCount, setTurnCount] = useState(0);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; content: string } | null>(null);
@@ -151,8 +150,6 @@ export default function PMKnowledgeApp() {
     if (saved) setHistory(JSON.parse(saved));
     const savedWebhook = localStorage.getItem('slack-webhook');
     if (savedWebhook) setSlackWebhook(savedWebhook);
-    const savedApiKey = localStorage.getItem('anthropic-api-key');
-    if (savedApiKey) setApiKey(savedApiKey);
     
     // 音声認識のサポートチェック
     if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
@@ -277,10 +274,6 @@ export default function PMKnowledgeApp() {
       alert('議事録ファイルをアップロードしてください');
       return;
     }
-    if (!apiKey) {
-      alert('APIキーが設定されていません。設定画面からAnthropic APIキーを登録してください。');
-      return;
-    }
 
     setIsTyping(true);
     setDiagnosisResult(null);
@@ -357,22 +350,22 @@ export default function PMKnowledgeApp() {
 ---
 （締めの一言）`;
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
           max_tokens: 2048,
           system: systemPrompt,
           messages: [{ role: 'user', content: `以下の議事録を分析してください：\n\n${uploadedFile.content}` }]
         })
       });
 
-      if (!response.ok) throw new Error('API呼び出しに失敗しました');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'API呼び出しに失敗しました');
+      }
       const data = await response.json();
       setDiagnosisResult(data.content[0].text);
     } catch (error: any) {
@@ -384,10 +377,6 @@ export default function PMKnowledgeApp() {
 
   const handleSend = async () => {
     if (!userInput.trim()) return;
-    if (!apiKey) {
-      alert('APIキーが設定されていません。設定画面からAnthropic APIキーを登録してください。');
-      return;
-    }
 
     const newMessages = [...messages, { role: 'user', content: userInput }];
     setMessages(newMessages);
@@ -441,22 +430,22 @@ ${isNearEnd ? '【重要】そろそろ会話を締めくくる段階です。�
 
 次の質問を1つだけ、自然な会話形式で返してください。質問は具体的で、後輩の回答内容に基づいたものにしてください。`;
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
           max_tokens: 1024,
           system: systemPrompt,
           messages: conversationHistory
         })
       });
 
-      if (!response.ok) throw new Error('API呼び出しに失敗しました');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'API呼び出しに失敗しました');
+      }
       const data = await response.json();
       let aiResponse = data.content[0].text;
       
@@ -511,21 +500,22 @@ ${isNearEnd ? '【重要】そろそろ会話を締めくくる段階です。�
 【重要：感情タグ】
 回答の最後に必ず感情タグを付けてください：[EMOTION:praise]`;
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
           max_tokens: 2048,
           system: systemPrompt,
           messages: conversationHistory
         })
       });
 
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'API呼び出しに失敗しました');
+      }
       const data = await response.json();
       let finalAdvice = data.content[0].text;
       
@@ -546,11 +536,6 @@ ${isNearEnd ? '【重要】そろそろ会話を締めくくる段階です。�
 
   const summarizeAndShare = async () => {
     const summary = `【${selectedCategory}】のナレッジ共有\n\n${messages.filter((m: any) => m.role === 'assistant').pop()?.content}`;
-    
-    if (!apiKey) {
-      alert('APIキーが設定されていません');
-      return;
-    }
 
     try {
       const conversationText = messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
@@ -567,16 +552,14 @@ ${conversationText}
 必ず以下の形式のJSONのみを返してください:
 {"industry": "業種", "issue": "課題の概要", "solution": "解決策の概要"}`;
 
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
           max_tokens: 300,
+          system: 'JSON形式で情報を抽出してください。',
           messages: [{ role: 'user', content: extractPrompt }]
         })
       });
@@ -655,7 +638,6 @@ ${conversationText}
 
   const saveSettings = () => {
     localStorage.setItem('slack-webhook', slackWebhook);
-    localStorage.setItem('anthropic-api-key', apiKey);
     setShowSettings(false);
     alert('設定を保存しました!');
   };
@@ -681,26 +663,6 @@ ${conversationText}
           </div>
           <div className="space-y-6">
             <div>
-              <label className="block text-sm text-gray-600 mb-3 tracking-wide" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>Anthropic APIキー（必須）</label>
-              <input 
-                type="password" 
-                value={apiKey} 
-                onChange={(e) => setApiKey(e.target.value)} 
-                placeholder="sk-ant-..." 
-                className="w-full px-5 py-3 border border-purple-200 rounded-2xl focus:ring-2 focus:ring-purple-300 focus:border-transparent transition-all duration-300" 
-                style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}
-              />
-              <div className="mt-3 p-4 bg-blue-50/50 rounded-xl border border-blue-200">
-                <p className="text-sm text-gray-600 mb-2 tracking-wide" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>📝 APIキーの取得方法：</p>
-                <ol className="text-sm text-gray-500 space-y-1 ml-4" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>
-                  <li>1. <a href="https://console.anthropic.com/" target="_blank" rel="noreferrer" className="text-blue-600 underline">console.anthropic.com</a> にアクセス</li>
-                  <li>2. アカウント作成（初回$5無料クレジット）</li>
-                  <li>3. 「API Keys」から「Create Key」</li>
-                  <li>4. 生成されたキーをコピーして貼り付け</li>
-                </ol>
-              </div>
-            </div>
-            <div>
               <label className="block text-sm text-gray-600 mb-3 tracking-wide" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>Slack Webhook URL（任意）</label>
               <input 
                 type="text" 
@@ -710,6 +672,9 @@ ${conversationText}
                 className="w-full px-5 py-3 border border-purple-200 rounded-2xl focus:ring-2 focus:ring-purple-300 focus:border-transparent transition-all duration-300" 
                 style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}
               />
+              <p className="mt-2 text-sm text-gray-500" style={{ fontFamily: 'Quicksand, sans-serif', fontWeight: 400 }}>
+                設定すると、ナレッジ共有時にSlackへ自動投稿されます
+              </p>
             </div>
             <button 
               onClick={saveSettings} 
